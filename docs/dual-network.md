@@ -17,7 +17,8 @@ The main network is the only source of normal memory retrieval.
 ## Auxiliary network
 
 The auxiliary network is `SelfTrace` (`memlayer/selftrace.py`), backed by the
-append-only `self_trace` table. It records:
+`self_trace` table. The normal path is append-only; explicit erasure is
+available for deleted memories and user requests. It records:
 
 - retrieval transitions (`retrieval`);
 - cognition proposals (`proposal`);
@@ -41,7 +42,7 @@ retrieval result
    |
    |  optional: record_retrieval_if_changed(...)
    v
-self_trace: retrieval transition (append-only)
+self_trace: retrieval transition (append-only by default)
 
 working idea
    |
@@ -61,21 +62,29 @@ self_trace: approval record
 
 `record_retrieval_if_changed()` compares the current `(produced, rejected)`
 signature with the last recorded one. Repeated identical results do not create
-new rows. Retrieval records contain ids, scene, `D`, a parameter fingerprint,
-and an activation fingerprint rather than the original text.
+new rows. Retrieval records contain ids, a scene fingerprint, `D`, a parameter
+fingerprint, and an activation fingerprint rather than the original query or
+scene text.
 
 ### 2. Propose without writing the main graph
 
-`propose_cognition()` stores a proposal and its evidence ids in the auxiliary
-network. It does not create a node or edge. An unapproved proposal must leave
-the main graph byte-identical.
+`propose_cognition()` stores a proposal's summary/source-quote fingerprints,
+their lengths, and its evidence ids in the auxiliary network. It does not store
+the proposal text. It does not create a node or edge. An unapproved proposal
+must leave the main graph byte-identical. Because the text is not retained,
+`approve_proposal(seq, summary=...)` requires the caller to supply the summary
+again at approval time.
 
 ### 3. Approve through the normal write path
 
-`approve_proposal(seq)` is the main-network vote. It calls `ingest.reflect()`:
+`approve_proposal(seq, summary=...)` is the main-network vote. It calls `ingest.reflect()`:
 the result is a new semantic node plus `derived_from` edges to the evidence.
 After that one-time write, the new node follows all normal main-network rules
 for retrieval, decay, access, and deletion.
+
+Legacy proposal rows may still contain `summary` / `source_quote` fields. They
+are accepted for reading, and the free-text fields are redacted immediately
+after approval.
 
 ### 4. Keep an explicit edit trail
 
@@ -93,8 +102,10 @@ proposal/approval is still required.
 ## Invariants
 
 - **Retrieval isolation:** auxiliary rows do not affect `retrieve()` results.
-- **Append-only:** the store exposes append/read for self-trace, not update or
-  delete.
+- **Append-only by default:** the normal path only appends and reads.
+  `delete_trace()` / `redact_trace_payload()` exist as explicit erasure
+  primitives; `forget()` uses them to remove traces that reference deleted
+  nodes.
 - **Proposal is inert:** proposal does not change nodes or edges.
 - **Approval is explicit:** approval uses the normal `reflect()` write path.
 - **Deterministic:** fingerprints and narrative rendering use deterministic
@@ -128,7 +139,11 @@ seq = trace.propose_cognition(
     note="explicit evidence",
 )
 
-node = trace.approve_proposal(seq, created_at=2.0)
+node = trace.approve_proposal(
+    seq,
+    summary="用户似乎喜欢周末和朋友去咖啡馆",
+    created_at=2.0,
+)
 print(node.id)
 print(trace.narrative()["text"])
 ```

@@ -21,6 +21,7 @@ from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
+from .privacy import looks_sensitive, reject_if_sensitive
 from .types import (
     Edge,
     EdgeKind,
@@ -86,6 +87,51 @@ CREATE INDEX IF NOT EXISTS idx_nodes_scene ON nodes(scene);
 SCHEMA_VERSION = 1
 
 
+def _restrict_file(path: str | Path) -> None:
+    """尽力把数据库/备份收紧到仅所有者可读写；Windows 上只是尽力而为。"""
+
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+_NODE_ID_KEYS = frozenset({
+    "produced", "rejected", "activation", "evidence", "node_id",
+    "proposal_seq", "evidence_ids", "source_ids", "node_ids",
+})
+
+
+def _iter_node_ids(value: object):
+    """只收集 payload 里**明确表示节点 id** 的字段，避免误扫 day_index 等整数。"""
+
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in _NODE_ID_KEYS:
+                if isinstance(item, int) and not isinstance(item, bool):
+                    yield item
+                elif isinstance(item, (list, tuple)):
+                    for one in item:
+                        if isinstance(one, int) and not isinstance(one, bool):
+                            yield one
+            elif isinstance(item, (dict, list, tuple)):
+                yield from _iter_node_ids(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _iter_node_ids(item)
+
+
+def _iter_strings(value: object):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _iter_strings(item)
+
+
 def _atomic_backup(src_conn: sqlite3.Connection, dest: str | Path, *,
                    overwrite: bool = False) -> Path:
     dest_path = Path(dest).expanduser().resolve()
@@ -95,6 +141,8 @@ def _atomic_backup(src_conn: sqlite3.Connection, dest: str | Path, *,
     tmp_path = dest_path.with_name(dest_path.name + f".{os.getpid()}.tmp")
     if tmp_path.exists():
         tmp_path.unlink()
+    tmp_path.touch(mode=0o600, exist_ok=True)
+    _restrict_file(tmp_path)
     try:
         with closing(sqlite3.connect(tmp_path)) as dst:
             src_conn.commit()
@@ -104,6 +152,7 @@ def _atomic_backup(src_conn: sqlite3.Connection, dest: str | Path, *,
                 raise RuntimeError(f"导出快照未通过完整性检查：{integrity}")
             dst.commit()
         os.replace(tmp_path, dest_path)
+        _restrict_file(dest_path)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -143,8 +192,13 @@ class MemoryStore:
     def __init__(self, path: str | Path = ":memory:") -> None:
         self.path = str(path)
         if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if not self.path.startswith("file:"):
+                Path(self.path).touch(mode=0o600, exist_ok=True)
+                _restrict_file(self.path)
         self.conn = sqlite3.connect(self.path)
+        if self.path != ":memory:":
+            _restrict_file(self.path)
         # 删除要"真删"：被删行的页面用 0 覆盖，而不是只打删除标记（见 forget()）
         self.conn.execute("PRAGMA secure_delete = ON")
         self.conn.executescript(SCHEMA)
@@ -203,9 +257,18 @@ class MemoryStore:
         source_turn: str = "",
         obs_source: str = "",
         node_id: Optional[int] = None,
+        reject_sensitive: bool = True,
     ) -> Node:
-        """插入一个节点。`s0` 必须**由写入路径算好传进来**（见 `ingest.remember`）。"""
+        """插入一个节点。`s0` 必须**由写入路径算好传进来**（见 `ingest.remember`）。
 
+        `reject_sensitive=False` 只用于导入旧数据/测试；新写入不要关闭闸门。
+        """
+
+        if reject_sensitive:
+            reject_if_sensitive(
+                summary, scene or "", source_quote, source_turn, obs_source,
+                " ".join(tags), label="节点写入",
+            )
         kind_v = kind.value if isinstance(kind, NodeKind) else str(kind)
         cur = self.conn.execute(
             """INSERT INTO nodes
@@ -261,9 +324,15 @@ class MemoryStore:
         decay_rate: float = 0.0,
         evidence_quote: str = "",
         merge: bool = True,
+        reject_sensitive: bool = True,
     ) -> None:
-        """插一条边。`merge=True` 时同 (src,dst,kind) 已存在则**取较大权重**（幂等建链）。"""
+        """插一条边。`merge=True` 时同 (src,dst,kind) 已存在则**取较大权重**（幂等建链）。
 
+        `reject_sensitive=False` 只用于导入旧数据/测试。
+        """
+
+        if reject_sensitive:
+            reject_if_sensitive(evidence_quote, label="边证据")
         kind_v = kind.value if isinstance(kind, EdgeKind) else str(kind)
         if merge:
             row = self.conn.execute(
@@ -299,7 +368,11 @@ class MemoryStore:
           * `cascade_derived=True`：**所有来源都已被删**的派生节点一并删除（它只剩被删内容的转述）；
           * 仍有别的存活来源的派生节点**不删**，但会列在返回值的 `tainted` 里 —— 它的摘要
             可能还转述着被删内容，**由调用方决定**是否重写/删掉（这里不替你猜）。
-        返回 `{"deleted": [...], "cascaded": [...], "tainted": [...]}`。
+        返回 `{"deleted": [...], "cascaded": [...], "tainted": [...],
+        "trace_deleted": n}`。
+
+        轨迹（辅网）正常路径 append-only；这里是**唯一**的擦除例外：与被删节点
+        相关的轨迹行会一起清掉，避免"节点删了、提案原文还在轨迹里"。
         """
 
         base = {int(i) for i in node_ids}
@@ -314,6 +387,14 @@ class MemoryStore:
             else:
                 _, tainted = self._derived_fallout(existing)
             kill = existing | set(cascaded)
+            kill_nodes = self.nodes_by_ids(sorted(kill))
+            texts = []
+            for n in kill_nodes:
+                texts.extend([n.summary, n.source_quote, n.scene or "", n.source_turn])
+            keys = [t for t in texts if t and len(t) >= 4]
+            safe_reason = str(reason)
+            if looks_sensitive(safe_reason) or any(k in safe_reason for k in keys):
+                safe_reason = "redacted"
             kinds = dict(self.conn.execute(
                 f"SELECT id, kind FROM nodes WHERE id IN ({self._qs(kill)})", sorted(kill)).fetchall())
             ids = sorted(kill)
@@ -323,10 +404,16 @@ class MemoryStore:
             self.conn.execute(f"DELETE FROM nodes WHERE id IN ({q})", ids)
             self.conn.executemany(
                 "INSERT INTO tombstones (node_id, kind, deleted_at, reason) VALUES (?,?,?,?)",
-                [(i, kinds.get(i, ""), float(now), reason) for i in ids],
+                [(i, kinds.get(i, ""), float(now), safe_reason) for i in ids],
             )
             self.conn.commit()
-        return {"deleted": deleted, "cascaded": sorted(cascaded), "tainted": sorted(tainted)}
+            edge_quotes = self._scrub_edge_quotes(keys)
+            trace_deleted = self.purge_trace_for_nodes(ids, texts=texts)
+        else:
+            edge_quotes = 0
+            trace_deleted = 0
+        return {"deleted": deleted, "cascaded": sorted(cascaded), "tainted": sorted(tainted),
+                "edge_quotes_scrubbed": edge_quotes, "trace_deleted": trace_deleted}
 
     def forget_by_tags(self, tags: Sequence[str], *, now: float, reason: str = "user_request",
                        cascade_derived: bool = True) -> dict:
@@ -348,17 +435,101 @@ class MemoryStore:
         return [{"node_id": r[0], "kind": r[1], "deleted_at": r[2], "reason": r[3]} for r in rows]
 
     # ------------------------------------------------------------ 自我轨迹（辅网 v1）
-    # §22.4-②：**写完冻结** —— 这里只有 append 与读，**没有**任何 update/delete 入口
-    #（append-only 是结构保证，不靠"记得别改"）。检索路径永远不读这张表（§22.4-①）。
-    def append_trace(self, *, ts: float, kind: str, payload: dict) -> int:
-        """追加一条轨迹。返回 `seq`（单调递增）。"""
+    # §22.4-②：正常路径**写完冻结** —— 只有 append 与读；为满足被遗忘权，
+    # 另设显式 `delete_trace` / `purge_trace_for_nodes` / `redact_trace_payload`。
+    # 检索路径永远不读这张表（§22.4-①）。
+    def append_trace(self, *, ts: float, kind: str, payload: dict,
+                     reject_sensitive: bool = True) -> int:
+        """追加一条轨迹。返回 `seq`（单调递增）。
 
+        `reject_sensitive=False` 只用于导入旧版轨迹；新写入不要关闭闸门。
+        """
+
+        body = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if reject_sensitive:
+            reject_if_sensitive(body, label="轨迹写入")
         cur = self.conn.execute(
             "INSERT INTO self_trace (ts, kind, payload) VALUES (?,?,?)",
-            (float(ts), str(kind), json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+            (float(ts), str(kind), body),
         )
         self.conn.commit()
         return int(cur.lastrowid)
+
+    def delete_trace(self, seqs: Sequence[int]) -> int:
+        """**显式擦除**轨迹行；只给 `forget()` / 被遗忘权路径使用。"""
+
+        ids = sorted({int(s) for s in seqs})
+        if not ids:
+            return 0
+        q = self._qs(ids)
+        cur = self.conn.execute(f"DELETE FROM self_trace WHERE seq IN ({q})", ids)
+        self.conn.commit()
+        return int(cur.rowcount)
+
+    def purge_trace_for_nodes(self, node_ids: Sequence[int], *,
+                              texts: Sequence[str] = ()) -> int:
+        """删掉引用了这些节点 id（或包含这些原文）的轨迹行。
+
+        - `evidence` / `produced` / `rejected` / `activation` / `node_id` 等 int 字段；
+        - 旧版轨迹里可能残留的 `summary` / `source_quote` / `note` 原文；
+        - 返回删除的行数。
+        """
+
+        ids = {int(i) for i in node_ids}
+        keys = [str(t) for t in texts if t and len(str(t)) >= 4]
+        if not ids and not keys:
+            return 0
+        doomed: list[int] = []
+        for row in self.trace_rows():
+            payload = row["payload"]
+            if ids and any(i in ids for i in _iter_node_ids(payload)):
+                doomed.append(int(row["seq"]))
+                continue
+            if keys and any(
+                isinstance(s, str) and any(k in s for k in keys)
+                for s in _iter_strings(payload)
+            ):
+                doomed.append(int(row["seq"]))
+        return self.delete_trace(doomed)
+
+    def _scrub_edge_quotes(self, texts: Sequence[str]) -> int:
+        """把幸存边里仍然包含被删原文的 `evidence_quote` 清空。"""
+
+        keys = [str(t) for t in texts if t and len(str(t)) >= 4]
+        if not keys:
+            return 0
+        rows = self.conn.execute("SELECT id, evidence_quote FROM edges").fetchall()
+        hits = [int(r[0]) for r in rows
+                if r[1] and any(k in r[1] for k in keys)]
+        if hits:
+            q = self._qs(hits)
+            self.conn.execute(f"UPDATE edges SET evidence_quote='' WHERE id IN ({q})", hits)
+            self.conn.commit()
+        return len(hits)
+
+    def redact_trace_payload(self, seq: int, *,
+                             drop: Sequence[str] = ("summary", "source_quote", "note")) -> bool:
+        """把一条旧轨迹里的自由文本字段抹掉（保留指纹和结构字段）。"""
+
+        row = self.conn.execute(
+            "SELECT payload FROM self_trace WHERE seq=?", (int(seq),)).fetchone()
+        if row is None:
+            return False
+        payload = json.loads(row[0])
+        changed = False
+        for key in drop:
+            if key in payload:
+                payload.pop(key)
+                changed = True
+        if changed:
+            self.conn.execute(
+                "UPDATE self_trace SET payload=? WHERE seq=?",
+                (json.dumps(payload, ensure_ascii=False, sort_keys=True), int(seq)),
+            )
+            self.conn.commit()
+            if self.path != ":memory:":
+                self.scrub()
+        return changed
 
     def trace_rows(self) -> list[dict]:
         rows = self.conn.execute(
@@ -648,6 +819,8 @@ def restore_snapshot(snapshot: str | Path, dest: str | Path, *,
     tmp_path = dest_path.with_name(dest_path.name + f".{os.getpid()}.tmp")
     if tmp_path.exists():
         tmp_path.unlink()
+    tmp_path.touch(mode=0o600, exist_ok=True)
+    _restrict_file(tmp_path)
     try:
         with closing(sqlite3.connect(str(snapshot_path))) as src:
             src.execute("PRAGMA query_only = ON")
@@ -658,6 +831,7 @@ def restore_snapshot(snapshot: str | Path, dest: str | Path, *,
                     raise RuntimeError(f"恢复后未通过完整性检查：{integrity}")
                 dst.commit()
         os.replace(tmp_path, dest_path)
+        _restrict_file(dest_path)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()

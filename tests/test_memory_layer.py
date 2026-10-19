@@ -471,7 +471,7 @@ class TestRankCalibrationGate(BaseCase):
     病灶（`早期实验` 实测，见实验记录发现 1）：
     阶段一是 z 归一的加权和（~`O(1)`，实测 1.0–3.2），阶段二是出度归一后的
     `A_j · ŵ · γ`（~`O(0.01)`）⇒ 库里只要存在一个「同名的另一件事」（别的场景、
-    同一个线索词），它作为种子**永远压在正确答案上面**（30/30）。
+    同一个线索词），它作为种子**永远压在正确答案上面**（早期夹具上反复出现）。
 
     这一族测试守的就是那条：**排序分可比 + 跨场景在排序上打折**，且**只改读法**。
     """
@@ -1094,6 +1094,59 @@ class TestForgetAndPrivacy(BaseCase):
                  reject_sensitive=False)
         self.assertEqual(len(store.snapshot().nodes), 2)
 
+    def test_privacy_gate_covers_all_node_fields(self) -> None:
+        """隐私闸不能只查 summary/source_quote/tags。"""
+
+        store = self.mkstore()
+        bad = "999999190001011237"
+        cases = [
+            dict(summary="正常", scene=f"医院 {bad}"),
+            dict(summary="正常", source_turn=f"turn {bad}"),
+            dict(summary="正常", obs_source=f"obs {bad}"),
+            dict(summary="正常", tags=("x", bad)),
+        ]
+        for kw in cases:
+            with self.assertRaises(SensitiveContentError):
+                remember(store, obs=Observation(), **kw)
+        self.assertEqual(store.counts()["nodes"], 0)
+        with self.assertRaises(SensitiveContentError):
+            reflect(store, summary=f"反思 {bad}", sources=[])
+        self.assertEqual(store.counts()["nodes"], 0)
+
+    def test_low_level_writes_also_go_through_gate(self) -> None:
+        """`store.add_node` / `add_edge` / `append_trace` 不能被绕过。"""
+
+        store = self.mkstore()
+        bad = "999999190001011237"
+        with self.assertRaises(SensitiveContentError):
+            store.add_node(kind=NodeKind.EPISODE, summary=f"x {bad}", scene=None,
+                           tags=(), obs=Observation(), modulators=Modulators(),
+                           created_at=0.0, s0=0.0, base_persist=1.0)
+        with self.assertRaises(SensitiveContentError):
+            store.add_edge(src=1, dst=2, kind=EdgeKind.CO_OCCUR,
+                           evidence_quote=f"x {bad}")
+        with self.assertRaises(SensitiveContentError):
+            store.append_trace(ts=0.0, kind="proposal",
+                               payload={"summary": f"x {bad}"})
+        self.assertEqual(store.counts()["nodes"], 0)
+        self.assertEqual(store.counts()["edges"], 0)
+        self.assertEqual(store.counts()["self_trace"], 0)
+
+    def test_reflect_checks_source_quotes(self) -> None:
+        """反思不能把旧节点里残留的敏感原话复制到新边。"""
+
+        store = self.mkstore()
+        bad = "999999190001011237"
+        legacy = store.add_node(
+            kind=NodeKind.EPISODE, summary="旧节点", scene=None, tags=(),
+            obs=Observation(), modulators=Modulators(), created_at=0.0,
+            s0=0.0, base_persist=1.0, source_quote=f"旧原话 {bad}",
+            reject_sensitive=False,
+        )
+        with self.assertRaises(SensitiveContentError):
+            reflect(store, summary="新反思", sources=[legacy])
+        self.assertEqual(store.counts()["nodes"], 1, "反思失败不许留下半节点")
+
     # ---- 早期 加固：三个漏洞各自的回归（评审自查发现）----
 
     def test_id_card_with_X_suffix_is_caught(self) -> None:
@@ -1143,16 +1196,69 @@ class TestForgetAndPrivacy(BaseCase):
             self.assertEqual(dry[str(cache)]["removed"], 1)
             self.assertIn(needle, cache.read_text(encoding="utf-8"), "dry_run 不许写盘")
 
-            # 真擦：命中行消失、其它行保留、留 `.bak`
+            # 真擦：默认不留 `.bak`（不然"删除"又留了一份原文）
             report = scrub_files([cache], [needle])
             self.assertEqual(report[str(cache)]["removed"], 1)
             self.assertEqual(report[str(cache)]["kept"], 2)
+            self.assertIsNone(report[str(cache)]["backup"])
             body = cache.read_text(encoding="utf-8")
             self.assertNotIn(needle, body)
             self.assertIn("无关的一条", body)
+
+            # 显式要求备份时才留 `.bak`；调用方要自己负责后续安全删除
+            cache.write_text('{"text": "%s"}\n' % needle, encoding="utf-8")
+            report = scrub_files([cache], [needle], backup=True)
+            self.assertEqual(report[str(cache)]["removed"], 1)
             bak = Path(report[str(cache)]["backup"])
-            self.assertTrue(bak.exists(), "默认要留 .bak（可恢复）")
+            self.assertTrue(bak.exists(), "显式 backup=True 才留 .bak")
             self.assertIn(needle, bak.read_text(encoding="utf-8"))
+
+    def test_scrub_files_preserves_gbk_and_bom(self) -> None:
+        """GBK/UTF-8 BOM 文件擦除后不能变成乱码。"""
+
+        import tempfile
+        from pathlib import Path
+
+        from memlayer import find_text_in_files, scrub_files
+
+        needle = "这条不要了"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            gbk = root / "cache_gbk.jsonl"
+            gbk.write_bytes((
+                '{"text": "正常中文一行"}\n'
+                '{"text": "这条不要了"}\n'
+                '{"text": "另一行中文"}\n'
+            ).encode("gbk"))
+            self.assertEqual(find_text_in_files([gbk], [needle]), {str(gbk): 1})
+            report = scrub_files([gbk], [needle])
+            self.assertEqual(report[str(gbk)]["encoding"], "gb18030")
+            self.assertEqual(report[str(gbk)]["removed"], 1)
+            body = gbk.read_bytes().decode("gbk")
+            self.assertIn("正常中文一行", body)
+            self.assertIn("另一行中文", body)
+            self.assertNotIn(needle, body)
+            self.assertNotIn("\ufffd", body)
+
+            bom = root / "cache_bom.jsonl"
+            bom.write_bytes(b"\xef\xbb\xbf" + '{"text": "这条不要了"}\n'.encode("utf-8"))
+            report = scrub_files([bom], [needle])
+            self.assertEqual(report[str(bom)]["encoding"], "utf-8-sig")
+            self.assertEqual(bom.read_bytes()[:3], b"\xef\xbb\xbf", "BOM 要保留")
+
+    def test_scrub_files_does_not_touch_binary(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from memlayer import scrub_files
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "binary.dat"
+            raw = b"\x00\x01needle\x02"
+            path.write_bytes(raw)
+            report = scrub_files([path], ["needle"])
+            self.assertEqual(report[str(path)]["error"], "undecodable")
+            self.assertEqual(path.read_bytes(), raw, "二进制文件不许被改写")
 
 
 class TestRuntimeHook(BaseCase):
@@ -1255,9 +1361,10 @@ class TestSelfTrace(BaseCase):
         rows = store.trace_rows()
         self.assertEqual(rows[0]["payload"]["rejected"], [3, 4], "反事实只记 top-2（§22.8-3）")
         self.assertEqual(rows[0]["payload"]["produced"], [2, 1])
-        # 结构性的 append-only：store 上没有 update/delete 轨迹的入口
-        for bad in ("update_trace", "delete_trace", "remove_trace", "edit_trace"):
+        # 正常路径 append-only；为被遗忘权保留显式 delete_trace 入口
+        for bad in ("update_trace", "remove_trace", "edit_trace"):
             self.assertFalse(hasattr(store, bad), bad)
+        self.assertTrue(hasattr(store, "delete_trace"), "必须给被遗忘权留擦除入口")
 
     def test_freeze_under_main_net_ops(self) -> None:
         store = self.mkstore()
@@ -1304,12 +1411,104 @@ class TestSelfTrace(BaseCase):
         seq = st.propose_cognition(ts=6.0, summary="测试提案B",
                                    evidence_ids=(e1.id,), obs=Observation(anxiety=0.3))
         self.assertEqual(len(store.nodes()), before, "提案阶段主网不许变")
-        node = st.approve_proposal(seq, created_at=7.0)
+        node = st.approve_proposal(seq, summary="测试提案B", created_at=7.0)
         self.assertEqual(len(store.nodes()), before + 1)
         self.assertEqual(node.kind.value, "semantic")
         derived = {(e.src, e.dst) for e in store.edges() if e.kind == EdgeKind.DERIVED_FROM}
         self.assertIn((e1.id, node.id), derived, "批下来的认知必须挂 derived_from 指回证据")
         self.assertEqual(store.trace_rows()[-1]["kind"], "approval")
+
+    def test_trace_stores_fingerprints_not_raw_text(self) -> None:
+        """轨迹只存查询/场景/提案指纹，不存原文。"""
+
+        store = self.mkstore()
+        st = SelfTrace(store)
+        st.record_retrieval(ts=1.0, query_terms=("医院XQZJ", "身份证"), d=0.5,
+                            params=Params(), produced_ids=(1,), scene="医院XQZJ")
+        st.propose_cognition(ts=2.0, summary="提案原文XQZJ", evidence_ids=(1,),
+                             source_quote="引用原文XQZJ", note="备注XQZJ")
+        rows = store.trace_rows()
+        payload = str(rows[0]["payload"]) + str(rows[1]["payload"])
+        for raw in ("医院XQZJ", "提案原文XQZJ", "引用原文XQZJ", "备注XQZJ"):
+            self.assertNotIn(raw, payload)
+        self.assertEqual(len(rows[0]["payload"]["query_fp"]), 16)
+        self.assertEqual(len(rows[0]["payload"]["scene_fp"]), 16)
+        self.assertEqual(len(rows[1]["payload"]["summary_fp"]), 16)
+        self.assertEqual(rows[1]["payload"]["summary_chars"], len("提案原文XQZJ"))
+
+    def test_approve_requires_text_and_legacy_is_redacted(self) -> None:
+        store = self.mkstore()
+        st = SelfTrace(store)
+        seq = st.propose_cognition(ts=1.0, summary="提案XQZJ", evidence_ids=())
+        with self.assertRaises(ValueError):
+            st.approve_proposal(seq)
+        node = st.approve_proposal(seq, summary="提案XQZJ", created_at=2.0)
+        self.assertEqual(node.summary, "提案XQZJ")
+
+        # 旧版轨迹可能存了原文；批准后必须把自由文本字段抹掉
+        legacy_seq = store.append_trace(
+            ts=3.0, kind="proposal",
+            payload={"summary": "旧提案XQZJ", "source_quote": "旧引用XQZJ",
+                     "evidence": []},
+            reject_sensitive=False,
+        )
+        node2 = st.approve_proposal(legacy_seq, created_at=4.0)
+        self.assertEqual(node2.summary, "旧提案XQZJ")
+        row = [r for r in store.trace_rows() if r["seq"] == legacy_seq][0]
+        self.assertNotIn("summary", row["payload"])
+        self.assertNotIn("source_quote", row["payload"])
+
+    def test_forget_purges_trace_by_node_and_legacy_text(self) -> None:
+        store = self.mkstore()
+        e = remember(store, summary="可删除事件XQZJ", source_quote="原话XQZJ",
+                     obs=Observation(), created_at=0.0)
+        st = SelfTrace(store)
+        st.record_retrieval(ts=1.0, query_terms=("XQZJ",), d=0.5,
+                            params=Params(), produced_ids=(e.id,))
+        st.propose_cognition(ts=2.0, summary="提案XQZJ", evidence_ids=(e.id,))
+        out = store.forget([e.id], now=3.0)
+        self.assertGreaterEqual(out["trace_deleted"], 2)
+        self.assertEqual(store.trace_rows(), [], "引用被删节点的轨迹要一起清")
+
+        legacy = store.add_node(
+            kind=NodeKind.EPISODE, summary="旧事件XQZJ", scene=None, tags=(),
+            obs=Observation(), modulators=Modulators(), created_at=4.0,
+            s0=0.0, base_persist=1.0,
+        )
+        seq_raw = store.append_trace(
+            ts=5.0, kind="proposal", payload={"summary": "旧事件XQZJ"},
+            reject_sensitive=False,
+        )
+        out2 = store.forget([legacy.id], now=6.0)
+        self.assertGreaterEqual(out2["trace_deleted"], 1)
+        self.assertNotIn(seq_raw, [r["seq"] for r in store.trace_rows()])
+
+        seq = st.record_retrieval(ts=7.0, query_terms=("x",), d=0.5,
+                                  params=Params(), produced_ids=(999,))
+        self.assertEqual(st.purge([seq]), 1, "SelfTrace 也要有显式擦除入口")
+
+    def test_forget_scrubs_raw_trace_bytes(self) -> None:
+        """文件库里被删节点 + 旧版轨迹原文都不能残留。"""
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "mem.db"
+            store = MemoryStore(path)
+            e = remember(store, summary="旧提案标记TRACEQZ", obs=Observation(),
+                         created_at=0.0)
+            store.append_trace(
+                ts=1.0, kind="proposal",
+                payload={"summary": "旧提案标记TRACEQZ", "evidence": [e.id]},
+                reject_sensitive=False,
+            )
+            store.forget([e.id], now=2.0)
+            store.scrub()
+            store.close()
+            raw = b""
+            for suffix in ("", "-wal", "-journal"):
+                p = Path(str(path) + suffix)
+                if p.exists():
+                    raw += p.read_bytes()
+            self.assertNotIn(b"TRACEQZ", raw)
 
     def test_idempotent_replay(self) -> None:
         def build() -> MemoryStore:
@@ -1349,7 +1548,7 @@ class TestSelfTrace(BaseCase):
                             produced_ids=(e1.id,), rejected_ids=())
         seq = st.propose_cognition(ts=2.0, summary="测试提案B",
                                    evidence_ids=(e1.id,))
-        st.approve_proposal(seq, created_at=3.0)
+        st.approve_proposal(seq, summary="测试提案B", created_at=3.0)
         st.record_cognition_edit(ts=4.0, node_id=e1.id, reason="新证据：他这周早睡了")
         n1 = st.narrative()
         n2 = st.narrative()
@@ -1498,6 +1697,30 @@ class TestMemoryBackup(BaseCase):
             self.assertEqual(target.read_bytes(), b"do not overwrite")
 
 
+class TestFilePermissions(BaseCase):
+    """数据库/备份在 POSIX 上至少要是 0600。"""
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX permission bits only")
+    def test_db_export_and_scrub_are_owner_only(self) -> None:
+        from memlayer import scrub_files
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db = root / "memory.sqlite3"
+            store = MemoryStore(db)
+            self.assertEqual(db.stat().st_mode & 0o077, 0)
+            snap = root / "snapshot.sqlite3"
+            store.export_snapshot(snap)
+            self.assertEqual(snap.stat().st_mode & 0o077, 0)
+            store.close()
+
+            cache = root / "cache.jsonl"
+            cache.write_text("含敏感词的一行\n正常一行\n", encoding="utf-8")
+            scrub_files([cache], ["敏感词"], backup=True)
+            self.assertEqual(cache.stat().st_mode & 0o077, 0)
+            self.assertEqual((root / "cache.jsonl.bak").stat().st_mode & 0o077, 0)
+
+
 class TestReflectionGate(BaseCase):
     """§25.1 主动反思三闸门：反事实 × 复现 × 配额/冷却；默认关。"""
 
@@ -1618,11 +1841,14 @@ class TestReflectionGate(BaseCase):
         store = self.mkstore()
         ids = self.seed(store)
         text = "下次先问他现在要不要说"
+        scene = "医院XQZJ"
         ReflectionGate(store, self.policy()).evaluate(
-            ts=1.0, candidate=ReflectionCandidate((ids[0],), text, 0.9))
+            ts=1.0, candidate=ReflectionCandidate((ids[0],), text, 0.9, scene=scene))
         row = store.trace_rows()[-1]
         self.assertEqual(row["kind"], "reflection_gate")
         self.assertNotIn(text, str(row["payload"]), "闸门轨迹不复制候选原文")
+        self.assertNotIn(scene, str(row["payload"]), "闸门轨迹不复制场景原文")
+        self.assertEqual(len(row["payload"]["scene_fp"]), 16)
         self.assertEqual(len(row["payload"]["counterfactual_fp"]), 16)
         self.assertEqual(row["payload"]["counterfactual_chars"], len(text))
         nar = SelfTrace(store).narrative()

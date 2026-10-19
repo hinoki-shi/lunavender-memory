@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
@@ -78,6 +79,21 @@ class SensitiveContentError(ValueError):
     """写入被拒：内容疑似凭据。**异常信息里不带原文**，避免凭据又被写进日志。"""
 
 
+def reject_if_sensitive(*texts: object, label: str = "内容") -> None:
+    """任一文本疑似凭据 ⇒ 抛 `SensitiveContentError`。
+
+    这是写入路径的统一闸门：`summary`、`scene`、`source_quote`、`source_turn`、
+    `obs_source` 和标签都应经过它。异常只带类别，不带原文。
+    """
+
+    for text in texts:
+        if not isinstance(text, str) or not text:
+            continue
+        hit = looks_sensitive(text)
+        if hit:
+            raise SensitiveContentError(f"疑似敏感信息，拒绝写入（{label}: {hit}）")
+
+
 def looks_sensitive(text: str) -> Optional[str]:
     """命中返回**命中类别**（不是命中的原文），干净返回 None。"""
 
@@ -105,6 +121,47 @@ def looks_sensitive(text: str) -> Optional[str]:
 
 # ---------------------------------------------------------------- 产物擦除（加固第 3 条）
 
+def _decode_text_bytes(raw: bytes) -> Optional[tuple[str, str]]:
+    """把文本文件字节解码成 `(文本, 编码)`；二进制/无法识别则返回 None。
+
+    顺序：UTF-8 BOM → UTF-8 → GB18030（GBK 的超集）。保留原编码，
+    避免 Windows 上把 GBK 文件按 UTF-8 读写后变成乱码。
+    """
+
+    if b"\x00" in raw:
+        return None
+    if raw.startswith(b"\xef\xbb\xbf"):
+        try:
+            text = raw.decode("utf-8-sig")
+            if text.encode("utf-8-sig") == raw:
+                return text, "utf-8-sig"
+        except UnicodeDecodeError:
+            pass
+        return None
+    try:
+        text = raw.decode("utf-8")
+        if text.encode("utf-8") == raw:
+            return text, "utf-8"
+    except UnicodeDecodeError:
+        pass
+    try:
+        text = raw.decode("gb18030")
+        if text.encode("gb18030") == raw:
+            return text, "gb18030"
+    except UnicodeDecodeError:
+        pass
+    return None
+
+
+def _restrict_file(path: str | Path) -> None:
+    """尽力把敏感产物收紧到仅所有者可读写；Windows 上只是尽力而为。"""
+
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def find_text_in_files(paths: Iterable[str | Path], needles: Sequence[str]) -> dict[str, int]:
     """**只读**扫描：在每个文件里数一数，有多少行包含任一 `needles`。
 
@@ -120,8 +177,12 @@ def find_text_in_files(paths: Iterable[str | Path], needles: Sequence[str]) -> d
         path = Path(p)
         if not path.is_file():
             continue
+        decoded = _decode_text_bytes(path.read_bytes())
+        if decoded is None:
+            continue
+        text, _enc = decoded
         hits = 0
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in text.splitlines():
             if any(k in line for k in keys):
                 hits += 1
         if hits:
@@ -133,15 +194,19 @@ def scrub_files(
     paths: Iterable[str | Path],
     needles: Sequence[str],
     *,
-    backup: bool = True,
+    backup: bool = False,
     dry_run: bool = False,
 ) -> dict[str, dict]:
-    """逐行擦除含 `needles` 的行（默认留 `.bak` 再写回）。
+    """逐行擦除含 `needles` 的行，并**保留原文件编码**。
 
     ⚠️ **这是"让她忘掉"链路里唯一动磁盘产物的入口** —— `store.forget()` 只覆盖 SQLite；
     外部打标缓存必须靠这里擦。
 
-    返回 `{文件路径: {"removed": n, "kept": m, "backup": ".bak 路径或 None"}}`。
+    `backup=False`（默认）不留下原文副本。`backup=True` 会写一个 `.bak`，
+    里面**仍然有被擦掉的原文**，只应在你有独立的安全删除/加密方案时使用。
+
+    返回 `{文件路径: {"removed": n, "kept": m, "backup": ".bak 路径或 None",
+    "encoding": "utf-8" | "gb18030" | ..., "error": ...}}`。
     """
 
     keys = [n for n in needles if n]
@@ -152,18 +217,29 @@ def scrub_files(
         path = Path(p)
         if not path.is_file():
             continue
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        raw = path.read_bytes()
+        decoded = _decode_text_bytes(raw)
+        if decoded is None:
+            report[str(path)] = {"removed": 0, "kept": 0, "backup": None,
+                                 "error": "undecodable"}
+            continue
+        text, encoding = decoded
+        lines = text.splitlines(keepends=True)
         kept = [ln for ln in lines if not any(k in ln for k in keys)]
         removed = len(lines) - len(kept)
         if removed == 0:
-            report[str(path)] = {"removed": 0, "kept": len(lines), "backup": None}
+            report[str(path)] = {"removed": 0, "kept": len(lines), "backup": None,
+                                 "encoding": encoding}
             continue
         bak = None
         if not dry_run:
             if backup:
                 bak_path = path.with_suffix(path.suffix + ".bak")
-                bak_path.write_text("".join(lines), encoding="utf-8")
+                bak_path.write_bytes(raw)
+                _restrict_file(bak_path)
                 bak = str(bak_path)
-            path.write_text("".join(kept), encoding="utf-8")
-        report[str(path)] = {"removed": removed, "kept": len(kept), "backup": bak}
+            path.write_bytes("".join(kept).encode(encoding))
+            _restrict_file(path)
+        report[str(path)] = {"removed": removed, "kept": len(kept), "backup": bak,
+                             "encoding": encoding}
     return report

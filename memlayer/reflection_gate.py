@@ -167,7 +167,9 @@ class ReflectionGate:
             self.store.append_trace(ts=ts, kind=TRACE_KIND, payload={
                 "day_index": day_index,
                 "decision": decision.as_dict(),
-                "scene": str(candidate.scene),
+                "scene_fp": hashlib.sha256(
+                    str(candidate.scene).encode("utf-8")).hexdigest()[:16],
+                "scene_chars": len(str(candidate.scene)),
                 "counterfactual_fp": cf_fp,
                 "counterfactual_chars": len(cf),
                 "recurrence": round(recurrence, 6),

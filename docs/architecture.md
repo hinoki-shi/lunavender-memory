@@ -14,7 +14,7 @@ lifecycle.py    time, recency, access commits and state views
 ingest.py       remember / reflect / preference induction
 privacy.py      sensitive-content gate, hard delete helpers
 recent_buffer.py  recent working-memory buffer (pure logic)
-selftrace.py    append-only auxiliary self trace
+selftrace.py    auxiliary self trace (append-only by default, explicit erasure)
 reflection_gate.py  optional reflection admission policy
 synth.py        synthetic bank for tests and examples
 ```

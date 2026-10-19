@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 from .config import Params
-from .privacy import SensitiveContentError, looks_sensitive
+from .privacy import looks_sensitive, reject_if_sensitive
 from .store import MemoryStore
 from .types import EdgeKind, Modulators, Node, NodeKind, Observation
 from .weights import salience0
@@ -55,10 +55,10 @@ def remember(
     """
 
     if reject_sensitive:
-        for text in (summary, source_quote, " ".join(tags)):
-            hit = looks_sensitive(text)
-            if hit:
-                raise SensitiveContentError(f"疑似敏感信息，拒绝写入（{hit}）")
+        reject_if_sensitive(
+            summary, scene or "", source_quote, source_turn, obs_source,
+            " ".join(tags), label="记忆写入",
+        )
     p = params or Params()
     mods = modulators or Modulators()
     s0 = salience0(obs, mods, p)
@@ -76,6 +76,7 @@ def remember(
         source_quote=source_quote,
         source_turn=source_turn,
         obs_source=obs_source,
+        reject_sensitive=reject_sensitive,
     )
     if link:
         link_by_tags(store, node, params=p)
@@ -129,6 +130,7 @@ def reflect(
     params: Optional[Params] = None,
     created_at: float = 0.0,
     source_quote: str = "",
+    reject_sensitive: bool = True,
 ) -> Node:
     """反思：**新增**一个语义层节点，并从每个来源建一条 `derived_from` 边。
 
@@ -136,6 +138,10 @@ def reflect(
     "麦当劳那次"和"游泳那次"不许被揉成一句，但可以**共同派生**出一个抽象节点。
     """
 
+    if reject_sensitive:
+        reject_if_sensitive(summary, source_quote, label="反思写入")
+        for src in sources:
+            reject_if_sensitive(src.source_quote, label="反思证据")
     p = params or Params()
     node = store.add_node(
         kind=NodeKind.SEMANTIC,
@@ -150,6 +156,7 @@ def reflect(
         source_quote=source_quote,
         source_turn="",
         obs_source="rule",
+        reject_sensitive=reject_sensitive,
     )
     for src in sources:
         store.add_edge(
@@ -217,6 +224,9 @@ def induce_preferences(
             continue
         obs = Observation(happy=max(0.0, happy), angry=max(0.0, angry), importance=0.6,
                           arousal=0.2, unfinished=0.0)
+        quote = "；".join(n.source_quote for n in group[:3] if n.source_quote)[:200]
+        if looks_sensitive(summary) or looks_sensitive(quote):
+            continue
         node = store.add_node(
             kind=NodeKind.SEMANTIC,
             summary=summary,
@@ -227,7 +237,7 @@ def induce_preferences(
             created_at=created_at,
             s0=salience0(obs, Modulators(), p),
             base_persist=BASE_PERSIST["preference"],   # ← "偏好活得久"是**类型先验**给的
-            source_quote="；".join(n.source_quote for n in group[:3] if n.source_quote)[:200],
+            source_quote=quote,
             obs_source="rule",
         )
         for src in group:

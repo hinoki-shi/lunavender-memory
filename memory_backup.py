@@ -50,9 +50,14 @@ def _write_json_atomic(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
     try:
+        tmp.touch(mode=0o600, exist_ok=True)
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
                        encoding="utf-8")
         os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
     finally:
         if tmp.exists():
             tmp.unlink()

@@ -24,7 +24,13 @@ from .retrieval import (
     random_recall,
     random_seed_nodes,
 )
-from .privacy import SensitiveContentError, find_text_in_files, looks_sensitive, scrub_files
+from .privacy import (
+    SensitiveContentError,
+    find_text_in_files,
+    looks_sensitive,
+    reject_if_sensitive,
+    scrub_files,
+)
 from .reflection_gate import (
     ReflectionCandidate,
     ReflectionDecision,
@@ -108,6 +114,7 @@ __all__ = [
     # 隐私
     "SensitiveContentError",
     "looks_sensitive",
+    "reject_if_sensitive",
     "find_text_in_files",
     "scrub_files",
     # 自我轨迹（辅网 v0）

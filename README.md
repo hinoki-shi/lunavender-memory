@@ -18,7 +18,7 @@
 - 显式访问提交：检索本身只读，不偷偷改图；
 - 隐私闸、硬删除、墓碑和备份/恢复工具；
 - 主网 / 辅网：自我轨迹（正常路径 append-only，另备显式擦除）与显式提案-批准路径；见
-  [docs/dual-network.md](docs/dual-network.md)；
+  [docs/dual-network.md](https://github.com/hinoki-shi/lunavender-memory/blob/main/docs/dual-network.md)；
 - 近期工作记忆缓冲的纯逻辑实现。
 
 核心包只依赖 Python 标准库；适配器、模型和外部 API 不属于核心包。
@@ -79,15 +79,15 @@ result = retrieve(
 print(result.top(k=5))
 ```
 
-也可以直接运行 `python examples/quickstart.py`。
+在源码仓库中可以运行 `python examples/quickstart.py`。
 
 ## Optional Laya adapter
 
 `examples/laya_obs_adapter.py` is an optional adapter for
 [Laya](https://github.com/NandhaKishorM/laya). It is not bundled as a model and
 does not include weights. The upstream project is by Convai Innovations under
-Apache-2.0; see [docs/laya.md](docs/laya.md) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and download
+Apache-2.0; see [docs/laya.md](https://github.com/hinoki-shi/lunavender-memory/blob/main/docs/laya.md) and
+[THIRD_PARTY_NOTICES.md](https://github.com/hinoki-shi/lunavender-memory/blob/main/THIRD_PARTY_NOTICES.md) for attribution and download
 links. The base/checkpoint output is only a starting point: fine-tune and
 evaluate your own checkpoint on your data.
 
@@ -151,7 +151,7 @@ docs/              架构与设计说明
 
 `MemoryStore.forget()` 会删除节点、边、标签、出处和引用这些节点的轨迹；文件库请随后调用 `scrub()` 做 `VACUUM`。外部缓存/日志不在库的管辖范围内，请用 `find_text_in_files()` 扫描、`scrub_files()` 擦除；后者默认不留 `.bak`。
 
-更完整的落盘内容、删除边界和静态加密建议见 [docs/privacy.md](docs/privacy.md)。
+更完整的落盘内容、删除边界和静态加密建议见 [docs/privacy.md](https://github.com/hinoki-shi/lunavender-memory/blob/main/docs/privacy.md)。
 
 如果你把本库接入真实对话，请自行承担数据分级、脱敏、访问控制、告知/同意和备份责任。
 
@@ -169,8 +169,8 @@ docs/              架构与设计说明
 
 ## Reproducibility
 
-公开预览不包含作者的完整实验脚本、原始语料、人工标注和内部设计稿。代码注释里的 § 编号和实验数字来自内部夹具，不能仅凭本仓库独立复现；请把它们当作工程笔记，而不是 benchmark 结论。§ 编号也没有公开版对应文档（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。可复现的是本仓库的单元测试与行为约束。
+公开预览不包含作者的完整实验脚本、原始语料、人工标注和内部设计稿。代码注释里的 § 编号和实验数字来自内部夹具，不能仅凭本仓库独立复现；请把它们当作工程笔记，而不是 benchmark 结论。§ 编号也没有公开版对应文档（见 [CONTRIBUTING.md](https://github.com/hinoki-shi/lunavender-memory/blob/main/CONTRIBUTING.md)）。可复现的是本仓库的单元测试与行为约束。
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/hinoki-shi/lunavender-memory/blob/main/LICENSE).

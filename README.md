@@ -33,13 +33,19 @@
 
 ## 安装
 
-当前从仓库本地安装：
+当前尚未发布到 PyPI。可以直接从 GitHub 安装：
 
 ```bash
-python -m pip install -e .
+python -m pip install "git+https://github.com/hinoki-shi/lunavender-memory.git"
 ```
 
-Python 3.10+。
+或者下载/克隆仓库后本地安装：
+
+```bash
+python -m pip install .
+```
+
+Python 3.10+。核心包没有第三方运行时依赖；可选的 Laya adapter 需要另外安装 `laya` 并自行获取权重。
 
 ## 最小用法
 

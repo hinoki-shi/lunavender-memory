@@ -50,6 +50,16 @@ from .types import (
     NodeKind,
     Observation,
 )
+from .vectors import (
+    HashEmbedder,
+    VectorRecord,
+    VectorSidecar,
+    hybrid_seed_scores,
+    ranked_ids,
+    retrieval_text,
+    rrf_fuse,
+    text_hash,
+)
 from .weights import (
     channel_vector,
     decay_rate,
@@ -71,6 +81,15 @@ __all__ = [
     "NodeKind",
     "MemoryState",
     "Observation",
+    # 向量 sidecar（实验原型；不改变主网）
+    "HashEmbedder",
+    "VectorRecord",
+    "VectorSidecar",
+    "hybrid_seed_scores",
+    "ranked_ids",
+    "retrieval_text",
+    "rrf_fuse",
+    "text_hash",
     # 参数与发散度
     "Params",
     "params_for_path",

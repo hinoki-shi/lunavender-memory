@@ -52,6 +52,9 @@ class Query:
     seed_nodes: tuple[int, ...] = ()
     # 🆕 随机源的种子：**必须记进结果**，否则 §16.5 的"跑两遍逐位相同"会失效。
     seed: int = 0
+    # 🆕 混合召回：外部（词面 + 向量 + RRF）算好的种子分。
+    #    只在 seed_nodes 未给时作为阶段一的显式分数使用；调用方应先归一化。
+    seed_scores: Mapping[int, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -300,7 +303,17 @@ def retrieve(
         seeds = [int(nid) for nid in query.seed_nodes if int(nid) in snapshot.nodes]
         if not seeds:
             return _empty_result(dp, snapshot)
-        scores = {nid: 1.0 for nid in seeds}
+        scores = {nid: float(query.seed_scores.get(nid, 1.0)) for nid in seeds}
+    elif query.seed_scores:
+        # 混合召回：外部已经把词面/向量融合成 seed 分；这里只做准入门槛与 top-K。
+        scores = {int(nid): float(s) for nid, s in query.seed_scores.items()
+                  if int(nid) in snapshot.nodes}
+        if not scores:
+            return _empty_result(dp, snapshot)
+        ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+        seeds = [nid for nid, s in ranked[: max(1, p.seed_topk)] if s >= p.seed_threshold]
+        if not seeds:
+            return _empty_result(dp, snapshot)
     else:
         scores = seed_scores(snapshot, query, p, relevance=relevance)
         if not scores:

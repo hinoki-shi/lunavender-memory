@@ -19,6 +19,8 @@
 - 隐私闸、硬删除、墓碑和备份/恢复工具；
 - 主网 / 辅网：自我轨迹（正常路径 append-only，另备显式擦除）与显式提案-批准路径；见
   [docs/dual-network.md](https://github.com/hinoki-shi/lunavender-memory/blob/main/docs/dual-network.md)；
+- 可选的向量检索 sidecar（实验原型）：主网不变，sidecar 可重建；见
+  [docs/vector_sidecar.md](https://github.com/hinoki-shi/lunavender-memory/blob/main/docs/vector_sidecar.md)；
 - 近期工作记忆缓冲的纯逻辑实现。
 
 核心包只依赖 Python 标准库；适配器、模型和外部 API 不属于核心包。
@@ -115,7 +117,7 @@ evaluate your own checkpoint on your data.
 python -m unittest discover -s tests -v
 ```
 
-当前核心与示例测试共 **114** 条。
+当前核心与示例测试共 **121** 条。
 
 ## 目录
 
@@ -136,6 +138,7 @@ docs/              架构与设计说明
 - 规则提取器只用于端到端接线，不应被当成准确的情绪模型；
 - 记忆压缩、时间模糊和反馈验证仍是后续工作；
 - 默认是明文 SQLite，不内置整库/字段加密；需要静态加密时请把库放在 BitLocker / LUKS 等加密卷，或使用 SQLCipher 兼容封装。文件权限只做 `0600` 尽力而为，Windows ACL 需自行配置；
+- 向量 sidecar 自带的是确定性 `HashEmbedder`（测试替身，不是语义模型）；真实 BGE-M3 / e5 适配器尚未内置，且当前检索是纯 Python 线性扫描，规模上去后要换 Flat/HNSW/IVF-PQ；
 - 新版提案轨迹只存文本指纹，批准时必须重新传入 `summary=`；旧版轨迹会在批准后擦掉自由文本字段；
 - API 在 `0.x` 阶段可能调整。
 

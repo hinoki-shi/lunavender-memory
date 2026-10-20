@@ -50,6 +50,10 @@ class FallbackPolicy:
     # 有实体/标签锚点时可放宽
     anchor_accept_score: float = 0.38
     anchor_accept_margin: float = 0.02
+    # 弱主种子与向量指向同一节点时，仍要防止“单字巧合”变成假确认。
+    # 在真实档案上，单锚点负例的向量分约 0.47，而两锚点正例最低约 0.55。
+    weak_agree_min_anchors: int = 2
+    weak_agree_min_score: float = 0.50
     # 灰区：只反问，不注入
     review_score: float = 0.35
     review_margin: float = 0.01
@@ -129,6 +133,7 @@ class VectorFallback:
             return FallbackResult("abstain", "disabled")
 
         terms = content_terms(query_text)
+        primary_has_seed = bool(primary.seeds)
         primary_ok = False
         primary_reason = "no_primary_seed"
         if primary.seeds:
@@ -164,6 +169,35 @@ class VectorFallback:
                 _exclusive_anchor_count(snapshot, terms, primary.seeds[0],
                                         hits[0][0]),
                 float(hits[0][1]), hint,
+            )
+        if primary_has_seed:
+            # 主种子存在但覆盖率低：不把它直接当定论，也不允许向量单边覆盖。
+            if not hits:
+                chosen = (primary.seeds[0],)
+                return FallbackResult(
+                    "ask", "weak_primary_no_vector", chosen, {},
+                    _anchor_count(snapshot, terms, primary.seeds[0]), 0, 0.0,
+                    self._render_ask(snapshot, chosen),
+                )
+            if hits[0][0] == primary.seeds[0]:
+                anchors = _anchor_count(snapshot, terms, primary.seeds[0])
+                if (anchors >= p.weak_agree_min_anchors
+                        and float(hits[0][1]) >= p.weak_agree_min_score):
+                    return FallbackResult("primary", "weak_primary_vector_agree")
+                chosen = (primary.seeds[0],)
+                return FallbackResult(
+                    "ask", "weak_primary_single_anchor", chosen,
+                    {chosen[0]: float(hits[0][1])},
+                    anchors, 0, 0.0, self._render_ask(snapshot, chosen),
+                )
+            chosen = tuple(dict.fromkeys((primary.seeds[0], hits[0][0])))
+            return FallbackResult(
+                "ask", "weak_primary_vector_disagree", chosen,
+                {nid: score for nid, score in hits[:len(chosen)]},
+                _anchor_count(snapshot, terms, primary.seeds[0]),
+                _exclusive_anchor_count(snapshot, terms, primary.seeds[0],
+                                        hits[0][0]),
+                float(hits[0][1]), self._render_ask(snapshot, chosen),
             )
         if not hits:
             return FallbackResult("abstain", primary_reason + ";no_vector_hit")

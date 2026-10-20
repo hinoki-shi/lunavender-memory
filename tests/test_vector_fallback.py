@@ -137,6 +137,24 @@ class TestVectorFallback(BaseCase):
         self.assertNotEqual(result.decision, "primary")
         self.assertIn(a.id, result.candidates)
 
+    def test_single_character_agreement_is_not_enough(self):
+        store = self.mkstore()
+        node = remember(store, summary="学习计划", obs=Observation(),
+                        scene="学习", tags=("学习",))
+        side = VectorSidecar(":memory:")
+        self.addCleanup(side.close)
+        side.upsert(node.id, (1.0, 0.0), model="fixed")
+        emb = FixedEmbedder({"我学过阿拉伯语吗": (1.0, 0.0)})
+        terms = ("学", "阿", "拉", "伯", "语")
+        primary = retrieve(store.snapshot(), Query(terms=terms, now=0.0),
+                           0.5, Params())
+        self.assertTrue(primary.seeds)
+        result = VectorFallback(side, emb).decide(
+            "我学过阿拉伯语吗", primary, store.snapshot())
+        self.assertEqual(result.decision, "ask")
+        self.assertEqual(result.reason, "weak_primary_single_anchor")
+        self.assertIn(node.id, result.candidates)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -63,16 +63,16 @@ def build_bank(
     for i in range(n_nodes):
         scene = scene_names[i % n_scenes]
         k = rng.randint(*tags_per_node)
-        tags = set(rng.sample(local_pool, k=k))
+        tag_set = set(rng.sample(local_pool, k=k))
         if real_slots and rng.random() < 0.7:
             real = real_slots.pop()
-            tags.add(real)
+            tag_set.add(real)
             if abs(i - n_nodes // 2) < 2:
                 suggest_term = real
         if rng.random() < hub_fraction:
             kh = rng.randint(*hubs_per_node)
-            tags.update(rng.sample(HUB_ENTITIES, k=min(kh, len(HUB_ENTITIES))))
-        tags = tuple(sorted(tags))
+            tag_set.update(rng.sample(HUB_ENTITIES, k=min(kh, len(HUB_ENTITIES))))
+        tags = tuple(sorted(tag_set))
         if not suggest_term and abs(i - n_nodes // 2) < 2 and tags:
             suggest_term = tags[0]
         hot = rng.random() < hot_fraction

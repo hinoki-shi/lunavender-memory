@@ -84,6 +84,9 @@ class RuleExtractor:
             **{k: any(w in text for w in words) for k, words in _MODULATOR_KEYWORDS.items()}
         )
         importance = min(1.0, 0.2 + 0.2 * sum(1 for w in _CHANNEL_KEYWORDS["arousal"] if w in text))
+        raw_tags = raw.get("tags", ())
+        tags = (tuple(str(t) for t in raw_tags)
+                if isinstance(raw_tags, (list, tuple, set, frozenset)) else ())
         return ExtractedEvent(
             summary=summary,
             obs=Observation(
@@ -97,7 +100,7 @@ class RuleExtractor:
                 importance=importance,
             ),
             scene=str(raw.get("scene", self.scene)) if raw.get("scene", self.scene) else None,
-            tags=tuple(str(t) for t in raw.get("tags", ()) or ()),
+            tags=tags,
             modulators=mods,
             persist_key=str(
                 raw.get("persist_key")

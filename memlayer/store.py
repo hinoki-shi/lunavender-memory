@@ -96,6 +96,15 @@ def _restrict_file(path: str | Path) -> None:
         pass
 
 
+def _lastrowid(cur: sqlite3.Cursor) -> int:
+    """SQLite 插入成功时必然有 rowid；把 `None` 变成明确错误，方便类型检查。"""
+
+    row_id = cur.lastrowid
+    if row_id is None:
+        raise RuntimeError("SQLite insert returned no rowid")
+    return int(row_id)
+
+
 _NODE_ID_KEYS = frozenset({
     "produced", "rejected", "activation", "evidence", "node_id",
     "evidence_ids", "source_ids", "node_ids",
@@ -302,14 +311,15 @@ class MemoryStore:
             ),
         )
         self.conn.commit()
+        row_id = _lastrowid(cur)
         for tag in tags:
             self.conn.execute(
                 "INSERT OR IGNORE INTO tags (node_id, tag) VALUES (?,?)",
-                (int(cur.lastrowid), tag),
+                (row_id, tag),
             )
         self.conn.commit()
         return Node(
-            id=int(cur.lastrowid),
+            id=row_id,
             kind=NodeKind(kind_v),
             summary=summary,
             scene=scene,
@@ -463,7 +473,7 @@ class MemoryStore:
             (float(ts), str(kind), body),
         )
         self.conn.commit()
-        return int(cur.lastrowid)
+        return _lastrowid(cur)
 
     def delete_trace(self, seqs: Sequence[int]) -> int:
         """**显式擦除**轨迹行；只给 `forget()` / 被遗忘权路径使用。"""

@@ -45,6 +45,8 @@ python -m pip install "git+https://github.com/hinoki-shi/lunavender-memory.git"
 python -m pip install .
 ```
 
+也可以从 [Releases](https://github.com/hinoki-shi/lunavender-memory/releases) 下载 wheel/sdist 后本地安装。
+
 Python 3.10+。核心包没有第三方运行时依赖；可选的 Laya adapter 需要另外安装 `laya` 并自行获取权重。
 
 ## 最小用法

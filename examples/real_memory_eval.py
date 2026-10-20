@@ -90,7 +90,10 @@ def main() -> int:
     ap.add_argument("--query-model", default="qwen2.5:3b")
     ap.add_argument("--embed-model", default="qwen3-embedding:latest")
     ap.add_argument("--limit", type=int, default=30)
+    ap.add_argument("--now", type=float, default=None,
+                    help="天为单位的时间戳；默认使用当前时间")
     args = ap.parse_args()
+    now = args.now if args.now is not None else time.time() / 86400.0
 
     store = MemoryStore(args.db)
     sidecar = VectorSidecar(":memory:")
@@ -165,7 +168,7 @@ def main() -> int:
         for item in queries:
             q = str(item["query"])
             gold = int(str(item["gold"]))
-            primary = retrieve(snapshot, Query(terms=content_terms(q), now=0.0),
+            primary = retrieve(snapshot, Query(terms=content_terms(q), now=now),
                                0.5, Params())
             decision = fallback.decide(q, primary, snapshot)
             selected = None
@@ -194,6 +197,7 @@ def main() -> int:
             "nodes": len(nodes),
             "query_model": args.query_model,
             "embed_model": embedder.model,
+            "now_day": round(now, 6),
             "queries": len(queries),
             "metrics": {m: {k: round(avg(rows[m], k), 4)
                             for k in ("r1", "r5", "mrr", "ndcg10")}

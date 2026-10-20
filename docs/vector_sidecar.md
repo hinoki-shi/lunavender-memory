@@ -159,8 +159,9 @@ generated 23 queries locally with `qwen2.5:3b` and embedded with
 | vector | **0.913** | 0.913 | **0.913** | **0.913** |
 | equal RRF hybrid | 0.870 | 0.913 | 0.891 | 0.897 |
 
-The fallback returned primary=17, ask=6, confident=17/17, precision **1.000**,
-and negative false claims **0/6**. It made **no vector-only auto-use** because
-the DB has no tags/entities to serve as exclusive anchors. That is the intended
-precision-first behavior: without a verifier or tag extraction, the system
-asks instead of asserting a vector-only memory.
+The fallback returned primary=17, ask=6, confident=17/17, precision **1.000**.
+(The separate 6-query synthetic negative set still reports 0/6 false claims.)
+It made **no vector-only auto-use** because the DB has no tags/entities to
+serve as exclusive anchors. That is the intended precision-first behavior:
+without a verifier or tag extraction, the system asks instead of asserting a
+vector-only memory.

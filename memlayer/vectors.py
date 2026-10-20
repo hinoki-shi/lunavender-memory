@@ -60,15 +60,18 @@ class VectorRecord:
     updated_at: float
 
 
-def retrieval_text(node: Node) -> str:
-    """节点的可检索文本：摘要 + 标签 + 场景 + 类型。
+def retrieval_text(node: Node, *, include_tags: bool = False) -> str:
+    """节点的可检索文本：默认摘要 + 场景 + 类型；标签不默认塞进向量。
 
     默认**不嵌 source_quote**：原文更适合留在主网做审计，不应被复制到
     另一个索引文件里；如果未来要加，必须同步纳入删除/隐私边界。
+
+    标签只作为词面/图锚点；真实数据的标签往往有噪声，直接拼进 embedding
+    会稀释语义（实测会把向量 R@1 从 .913 拉低到 .870）。
     """
 
     parts = [str(node.summary or "")]
-    if node.tags:
+    if include_tags and node.tags:
         parts.append(" ".join(sorted(str(t) for t in node.tags)))
     if node.scene:
         parts.append(str(node.scene))

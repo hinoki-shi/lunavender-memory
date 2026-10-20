@@ -5,7 +5,7 @@ main memory graph.
 
 ```text
 main graph (SQLite: nodes / edges / tags)
-        │  retrieval_text(node) = summary + tags + scene + kind
+        │  retrieval_text(node) = summary + scene + kind (tags optional)
         ▼
 embedding model (real model, or HashEmbedder for tests)
         ▼
@@ -165,3 +165,10 @@ It made **no vector-only auto-use** because the DB has no tags/entities to
 serve as exclusive anchors. That is the intended precision-first behavior:
 without a verifier or tag extraction, the system asks instead of asserting a
 vector-only memory.
+
+A backfilled copy of the same DB (59 tags, 64 co-occurrence edges) kept the
+same fallback precision (17/17, no vector-only claims). Importantly, embedding
+`summary + scene + kind` and leaving tags out of the vector text restored
+vector R@1 to **0.913**; putting the noisy tags into the embedding dropped it
+to 0.870. Tags are useful for lexical/graph anchors, not automatically useful
+inside an embedding.

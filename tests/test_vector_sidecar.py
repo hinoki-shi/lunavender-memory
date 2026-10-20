@@ -45,14 +45,15 @@ class TestVectorSidecar(BaseCase):
             summary="在咖啡馆和朋友聊周末计划",
             obs=Observation(happy=0.6),
             scene="周末·下午",
-            tags=("咖啡馆", "朋友"),
+            tags=("咖啡馆", "朋友", "专属标签"),
             source_quote="这句话只应该留在主网",
         )
         text = retrieval_text(node)
-        self.assertIn("咖啡馆", text)
-        self.assertIn("朋友", text)
+        self.assertIn("咖啡馆", text)  # summary 里本来就有
+        self.assertNotIn("专属标签", text)  # tags 默认不拼进向量文本
         self.assertIn("周末·下午", text)
         self.assertNotIn("只应该留在主网", text)
+        self.assertIn("专属标签", retrieval_text(node, include_tags=True))
         self.assertEqual(text_hash(text), text_hash(text))
 
     def test_hash_embedder_is_deterministic_and_normalized(self) -> None:

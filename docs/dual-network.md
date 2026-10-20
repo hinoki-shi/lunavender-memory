@@ -158,4 +158,4 @@ See `tests/test_memory_layer.py::TestSelfTrace` for the invariant tests.
 - `cognition_edit` currently records an audit entry; the limited edit API and
   drift budget are future work.
 - No claim is made that the auxiliary timeline improves retrieval quality by
-  itself. Its purpose is auditability and explicit change control.
+  itself. Its purpose is inspectability and explicit change control.

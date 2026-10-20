@@ -31,7 +31,7 @@ def main() -> None:
         )
         result = retrieve(
             store.snapshot(),
-            Query(terms=("周末", "朋友"), now=1.0),
+            Query(terms=("周末", "朋友"), now=1.0),  # days, not epoch seconds
             d=0.5,
             params=Params(),
         )

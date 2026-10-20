@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lunavender-memory"
 version = "0.1.0"
-description = "A small, auditable long-term memory experiment library."
+description = "A small, inspectable long-term memory experiment library."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
@@ -19,6 +19,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
@@ -27,3 +29,6 @@ laya = ["laya>=0.3.4"]
 
 [tool.setuptools]
 packages = ["memlayer"]
+
+[tool.setuptools.package-data]
+memlayer = ["py.typed"]

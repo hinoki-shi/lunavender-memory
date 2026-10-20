@@ -34,6 +34,6 @@ The main-network / auxiliary-network split is described in
 ## Scope
 
 This repository is a **research preview**. It is useful for studying deterministic
-retrieval, forgetting and auditable storage. It is not a complete agent memory
+retrieval, forgetting and inspectable storage. It is not a complete agent memory
 service: extraction, tagging, vector recall and deployment-specific policy are
 left to callers.

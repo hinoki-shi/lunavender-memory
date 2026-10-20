@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
@@ -31,3 +31,11 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Compile
         run: python -m compileall -q memlayer examples tests
+      - name: Clean install smoke test
+        run: |
+          python -m venv "$RUNNER_TEMP/lv-install"
+          "$RUNNER_TEMP/lv-install/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/lv-install/bin/python" -m pip install .
+          "$RUNNER_TEMP/lv-install/bin/python" -m pip check
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/lv-install/bin/python" -I -c "import memlayer; from importlib.resources import files; assert files('memlayer').joinpath('py.typed').is_file(); print('import ok:', len(memlayer.__all__), 'exports')"

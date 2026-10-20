@@ -1,9 +1,12 @@
 # Lunavender Memory
 
-**夕苓记忆层 / Lunavender Memory** 是一个小型、可审计的长期记忆实验库。
+**夕苓记忆层 / Lunavender Memory** 是一个小型、可复核的长期记忆实验库。
 
 > 状态：**research preview**。这是一个仍在迭代的研究原型，不是生产级记忆服务。
 > 仓库只包含核心代码、合成示例和测试；不包含任何真实对话、个人标注或模型权重。
+>
+> **时间单位：核心 API 的 `now` / `created_at` / `ts` 都是「天」，不是 epoch 秒。**
+> 用 `time.time()` 时请先除以 `86400`；`examples/runtime_hook.py` 是唯一的秒→天边界。
 
 ## 这是什么
 
@@ -63,7 +66,7 @@ b = remember(
 
 result = retrieve(
     store.snapshot(),
-    Query(terms=("周末", "朋友"), now=1.0),
+    Query(terms=("周末", "朋友"), now=1.0),  # days, not epoch seconds
     d=0.5,
     params=Params(),
 )
@@ -91,6 +94,12 @@ evaluate your own checkpoint on your data.
 5. **隐私优先**：所有写入路径（节点、边证据、轨迹）都过敏感内容闸；删除会同时清理节点、边、标签、出处和引用这些节点的轨迹，并留下无内容墓碑。
 6. **可恢复**：更新数据库前使用 `memory_backup.py` 做一致性快照。
 7. **轨迹最小化**：检索轨迹只存查询/场景指纹；提案轨迹只存摘要指纹，批准时由调用方重新提供文本。
+
+## 可复核的边界
+
+这里的“可复核”指：能查到一条记忆是怎么来的 —— 观测量、出处、参数/激活指纹、批准链。
+
+它**不是 tamper-evident**：`delete_trace()` / `redact_trace_payload()` 是公开 API，而且没有 hash chain；改一行 payload 不会被自动发现。需要防篡改时，请把导出快照写到自己的 WORM / append-only 存储。
 
 ## 测试
 
@@ -154,7 +163,7 @@ docs/              架构与设计说明
 
 ## Reproducibility
 
-公开预览不包含作者的完整实验脚本、原始语料、人工标注和内部设计稿。代码注释里的 § 编号和实验数字来自内部夹具，不能仅凭本仓库独立复现；请把它们当作工程笔记，而不是 benchmark 结论。可复现的是本仓库的单元测试与行为约束。
+公开预览不包含作者的完整实验脚本、原始语料、人工标注和内部设计稿。代码注释里的 § 编号和实验数字来自内部夹具，不能仅凭本仓库独立复现；请把它们当作工程笔记，而不是 benchmark 结论。§ 编号也没有公开版对应文档（见 [CONTRIBUTING.md](CONTRIBUTING.md)）。可复现的是本仓库的单元测试与行为约束。
 
 ## License
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .config import Params, params_for_path
 from .divergence import DParams, params_for
+from .fallback import FallbackPolicy, FallbackResult, VectorFallback, content_terms
 from .ingest import BASE_PERSIST, induce_preferences, reflect, remember
 from .lexicon import lexical_relevance, tokenize
 from .lifecycle import NodeView, advance_time, commit_access, freeze_signature, recency_of, view_of
@@ -81,6 +82,11 @@ __all__ = [
     "NodeKind",
     "MemoryState",
     "Observation",
+    # 主检索失败时的保守向量兜底
+    "FallbackPolicy",
+    "FallbackResult",
+    "VectorFallback",
+    "content_terms",
     # 向量 sidecar（实验原型；不改变主网）
     "HashEmbedder",
     "VectorRecord",

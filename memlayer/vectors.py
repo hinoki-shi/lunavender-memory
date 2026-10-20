@@ -210,6 +210,27 @@ class VectorSidecar:
         self.conn.commit()
         return int(cur.rowcount)
 
+    def upsert(self, node_id: int, vector: Sequence[float], *,
+               model: str, text_hash_value: str = "",
+               updated_at: float = 0.0) -> None:
+        """直接写入一个向量（给外部 embedder/测试用；常规路径用 sync）。"""
+
+        vec = _normalise(tuple(float(x) for x in vector))
+        if not vec:
+            raise ValueError("vector must not be empty")
+        self.conn.execute(
+            "INSERT INTO node_vectors "
+            "(node_id, model, dim, vector, text_hash, updated_at) "
+            "VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(node_id) DO UPDATE SET "
+            "model=excluded.model, dim=excluded.dim, vector=excluded.vector, "
+            "text_hash=excluded.text_hash, updated_at=excluded.updated_at",
+            (int(node_id), str(model), len(vec),
+             array.array("f", vec).tobytes(),
+             str(text_hash_value), float(updated_at)),
+        )
+        self.conn.commit()
+
     def search(self, query_vector: Sequence[float], k: int = 10, *,
                allowed_ids: Optional[Iterable[int]] = None,
                model: Optional[str] = None) -> list[tuple[int, float]]:

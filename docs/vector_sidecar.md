@@ -126,3 +126,22 @@ correct vector hit from rank 1 to rank 5. A fixed coverage gate fixed that case
 but hurt two other queries where a low-coverage lexical hit was correct. The
 lesson is to calibrate fusion weights/confidence on a held-out set rather than
 hard-coding a gate.
+
+### Conservative fallback
+
+`VectorFallback` was evaluated on the same 28 positive queries plus 6
+“should-not-remember” negatives. With its conservative defaults:
+
+- primary: 19
+- `use_vector`: 3 (all correct)
+- `ask`: 4
+- `abstain`: 2
+- confident: 22/28, precision **1.000**
+- negatives falsely claimed: **0/6**
+
+The fallback is deliberately allowed to say “I am not sure” instead of
+injecting a vector-only candidate. It also treats shared anchors as
+non-discriminative: if the top two candidates both contain the same query
+anchor, the anchor does not lower the acceptance threshold. Thresholds here are
+fitted to this synthetic set and the qwen3-embedding score scale; re-tune them
+on real data.

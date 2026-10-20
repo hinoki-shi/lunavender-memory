@@ -21,11 +21,16 @@ for p in (str(ROOT), str(EXAMPLES)):
 from memlayer import (  # noqa: E402
     MemoryStore,
     Observation,
+    Params,
+    Query,
     VectorSidecar,
+    VectorFallback,
+    content_terms,
     hybrid_seed_scores,
     lexical_relevance,
     remember,
     rrf_fuse,
+    retrieve,
     tokenize,
 )
 from ollama_embedder import OllamaEmbedder  # noqa: E402
@@ -105,6 +110,15 @@ QUERIES: list[tuple[str, int, str]] = [
     ("笔记本电脑", 1, "exact"),
     ("做胃镜之前要注意什么", 9, "association"),
     ("去杭州坐什么车", 12, "association"),
+]
+
+NEGATIVE_QUERIES = [
+    "我养过一只叫豆豆的狗吗",
+    "我上次去巴黎是什么时候",
+    "我的吉他放在哪里",
+    "公司年会抽中过什么奖",
+    "我学过法语吗",
+    "我买过一辆自行车吗",
 ]
 
 STOP = set("的了在是我你他她它这一有不就都也很把被和跟与或吗呢啊吧哦嘛么个些没还又再会让给到过太好多多少什怎什么怎样呀啦对从向当只才已应该能会想说要去看做发生在后前时回上下里外中")
@@ -221,6 +235,52 @@ def main() -> int:
                      d["hybrid"], d["hybrid_w2"], d["hybrid_gated"],
                      d["gold_summary"]))
 
+        # Conservative fallback: primary first, vector only when primary is
+        # missing or has a low-coverage seed; gray zone asks, never claims.
+        fallback = VectorFallback(sidecar, embedder)
+        fb_pos: list[dict[str, object]] = []
+        for text, gold_idx, kind in QUERIES:
+            terms = content_terms(text)
+            primary = retrieve(snapshot, Query(terms=terms, now=0.0),
+                               0.5, Params())
+            r = fallback.decide(text, primary, snapshot)
+            selected = None
+            if r.decision == "primary" and primary.seeds:
+                selected = primary.seeds[0]
+            elif r.decision == "use_vector" and r.candidates:
+                selected = r.candidates[0]
+            gold = nodes[gold_idx].id
+            fb_pos.append({
+                "query": text, "kind": kind, "decision": r.decision,
+                "selected": selected, "gold": gold,
+                "correct": (selected == gold) if selected is not None else None,
+                "reason": r.reason,
+            })
+
+        fb_neg: list[dict[str, object]] = []
+        for text in NEGATIVE_QUERIES:
+            primary = retrieve(snapshot, Query(terms=content_terms(text), now=0.0),
+                               0.5, Params())
+            r = fallback.decide(text, primary, snapshot)
+            fb_neg.append({
+                "query": text, "decision": r.decision, "reason": r.reason,
+                "false_confident": r.decision in ("primary", "use_vector"),
+            })
+
+        decision_count: dict[str, int] = {}
+        for d in fb_pos:
+            decision = str(d["decision"])
+            decision_count[decision] = decision_count.get(decision, 0) + 1
+        confident = [d for d in fb_pos if d["decision"] in ("primary", "use_vector")]
+        correct = sum(1 for d in confident if d["correct"])
+        false_neg = sum(1 for d in fb_neg if d["false_confident"])
+        print("\nfallback positive decisions:", decision_count)
+        print("fallback positive confident: %d, correct: %d, precision: %.3f"
+              % (len(confident), correct,
+                 correct / len(confident) if confident else 0.0))
+        print("fallback negative: false_confident=%d / %d"
+              % (false_neg, len(fb_neg)))
+
         out = {
             "model": embedder.model,
             "dim": embedder.dim,
@@ -233,6 +293,16 @@ def main() -> int:
                             for k in ("r1", "r5", "mrr", "ndcg10")}
                         for m in methods},
             "per_query": per_query,
+            "fallback": {
+                "decisions": decision_count,
+                "confident": len(confident),
+                "correct": correct,
+                "precision": round(correct / len(confident), 4) if confident else 0.0,
+                "negative_false_confident": false_neg,
+                "negative_total": len(fb_neg),
+                "positive_rows": fb_pos,
+                "negative_rows": fb_neg,
+            },
         }
         outp = ROOT / "outputs" / "vector_sidecar_eval.json"
         outp.parent.mkdir(parents=True, exist_ok=True)

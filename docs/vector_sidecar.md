@@ -102,3 +102,27 @@ Build a small query set with four buckets: exact entity, paraphrase, time, and
 cross-scene association. Compare lexical-only, vector-only, and hybrid on
 Recall@5, MRR, and nDCG@10. A useful hybrid should improve paraphrase recall
 without losing exact entity/time queries.
+
+## Prototype result (2026-10-20)
+
+Run with `Ollama qwen3-embedding:latest` (1024 dims), a synthetic corpus of
+40 events and 28 queries (including near-duplicate distractors), using
+`examples/vector_sidecar_eval.py`:
+
+| method | R@1 | R@5 | MRR | nDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| lexical | 0.821 | 0.893 | 0.848 | 0.867 |
+| vector | 0.929 | 1.000 | 0.964 | 0.974 |
+| equal RRF hybrid | **0.964** | **1.000** | **0.971** | **0.978** |
+| vector-weighted RRF | 0.929 | 1.000 | 0.954 | 0.965 |
+| coverage-gated hybrid | 0.929 | 1.000 | 0.964 | 0.974 |
+
+The corpus is 40 nodes, synced in 2.18s; 28 query embeddings took 1.68s total
+on this machine. This is a plumbing/quality sanity check, not a benchmark.
+
+The important failure case: `和同伴商量出行目的地` had no correct lexical
+hit, but lexical produced a one-character spurious match; equal RRF pushed the
+correct vector hit from rank 1 to rank 5. A fixed coverage gate fixed that case
+but hurt two other queries where a low-coverage lexical hit was correct. The
+lesson is to calibrate fusion weights/confidence on a held-out set rather than
+hard-coding a gate.

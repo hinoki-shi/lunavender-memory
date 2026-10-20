@@ -98,7 +98,7 @@ evaluate your own checkpoint on your data.
 python -m unittest discover -s tests -v
 ```
 
-当前核心与示例测试共 **112** 条。
+当前核心与示例测试共 **114** 条。
 
 ## 目录
 
@@ -108,6 +108,7 @@ tests/             核心与示例回归测试
 examples/          synthetic quickstart、规则版 runtime 接线、obs schema、可选 Laya adapter
 memory_backup.py   一致性导出/校验/恢复
 backup_memory.py   CLI 包装
+SECURITY.md        漏洞报告与安全边界
 docs/              架构与设计说明
 ```
 

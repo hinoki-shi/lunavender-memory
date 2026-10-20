@@ -98,7 +98,7 @@ def _restrict_file(path: str | Path) -> None:
 
 _NODE_ID_KEYS = frozenset({
     "produced", "rejected", "activation", "evidence", "node_id",
-    "proposal_seq", "evidence_ids", "source_ids", "node_ids",
+    "evidence_ids", "source_ids", "node_ids",
 })
 
 
@@ -175,6 +175,8 @@ def _obs_from_json(raw: str) -> Observation:
     """
 
     data = json.loads(raw)
+    if not isinstance(data, dict):
+        return Observation()
     return Observation(**{k: v for k, v in data.items() if k in _OBS_FIELDS})
 
 
@@ -182,8 +184,16 @@ def _mods_to_json(mod: Modulators) -> str:
     return json.dumps(asdict(mod), ensure_ascii=False, sort_keys=True)
 
 
+_MODS_FIELDS = frozenset(f.name for f in fields(Modulators))
+
+
 def _mods_from_json(raw: str) -> Modulators:
-    return Modulators(**json.loads(raw))
+    """**容忍未知键**：旧库/新库的调制器字段名变化时，别让整库读不出来。"""
+
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        return Modulators()
+    return Modulators(**{k: v for k, v in data.items() if k in _MODS_FIELDS})
 
 
 class MemoryStore:

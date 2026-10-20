@@ -264,6 +264,32 @@ class TestFreeze(BaseCase):
                          "时间推进不许改任何落盘字段（§14.3）")
 
 
+class TestSchemaTolerance(BaseCase):
+    """旧库/新库字段名变化时，读库不能整库崩掉。"""
+
+    def test_observation_and_modulator_json_are_schema_tolerant(self) -> None:
+        store = self.mkstore()
+        n = remember(store, summary="x", obs=Observation(happy=0.5),
+                     modulators=Modulators(first_time=True))
+        store.conn.execute(
+            "UPDATE nodes SET obs=?, modulators=? WHERE id=?",
+            ('{"happy": 0.5, "future_obs": 1}',
+             '{"first_time": true, "future_mod": 1}', n.id),
+        )
+        store.conn.commit()
+        got = store.nodes()[0]
+        self.assertAlmostEqual(got.obs.happy, 0.5)
+        self.assertTrue(got.modulators.first_time)
+        self.assertFalse(got.modulators.public)
+
+        # 非对象 JSON 也不能把整库读崩
+        store.conn.execute("UPDATE nodes SET obs='[]', modulators='[]' WHERE id=?", (n.id,))
+        store.conn.commit()
+        got = store.nodes()[0]
+        self.assertEqual(got.obs.happy, 0.0)
+        self.assertFalse(got.modulators.first_time)
+
+
 class TestEdgeRules(BaseCase):
     """§15.1③ 的边类型规则（含早期实验踩到的 top-M 顺序 bug）。"""
 
@@ -1509,6 +1535,26 @@ class TestSelfTrace(BaseCase):
                 if p.exists():
                     raw += p.read_bytes()
             self.assertNotIn(b"TRACEQZ", raw)
+
+    def test_forget_does_not_confuse_proposal_seq_with_node_id(self) -> None:
+        """proposal_seq 是轨迹序号，不是节点 id；不能让编号碰撞误删 approval。"""
+
+        store = self.mkstore()
+        a = remember(store, summary="事件A", obs=Observation(), created_at=0.0)
+        c = remember(store, summary="事件C", obs=Observation(), created_at=1.0)
+        st = SelfTrace(store)
+        seq = st.propose_cognition(ts=2.0, summary="提案",
+                                   evidence_ids=(a.id, c.id))
+        self.assertEqual(seq, 1)
+        b = st.approve_proposal(seq, summary="提案", created_at=3.0)
+        out = store.forget([a.id], now=4.0)
+        self.assertIn(b.id, {n.id for n in store.nodes()},
+                      "还有存活来源的派生节点不该级联删除")
+        self.assertIn(b.id, out["tainted"])
+        approvals = [r for r in store.trace_rows() if r["kind"] == "approval"]
+        self.assertEqual(len(approvals), 1,
+                         "proposal_seq 不能当节点 id 误删 approval")
+        self.assertEqual(approvals[0]["payload"]["node_id"], b.id)
 
     def test_idempotent_replay(self) -> None:
         def build() -> MemoryStore:

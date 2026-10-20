@@ -23,6 +23,8 @@ checkpoints/
 *.ckpt
 logs/
 *.log
+*.bak
+*.bak.*
 *.sqlite3
 *.db
 

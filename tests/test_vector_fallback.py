@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from memlayer import (  # noqa: E402
+    FallbackPolicy,
     MemoryStore,
     Observation,
     Params,
@@ -58,6 +59,7 @@ class BaseCase(unittest.TestCase):
             "q_ask": (1.0, 0.0),
             "q_low": (-1.0, 0.0),
             "和同伴商量出行目的地": (1.0, 0.0),
+            "咖啡馆": (1.0, 0.0),
         })
         return store, a, b, c, side, emb
 
@@ -72,15 +74,37 @@ class TestVectorFallback(BaseCase):
         self.assertEqual(result.decision, "primary")
         self.assertEqual(result.candidates, ())
 
+    def test_primary_vector_disagreement_asks(self):
+        store, a, b, c, side, emb = self.mkcase()
+        disagree = FixedEmbedder({"咖啡馆": (0.0, 1.0)})
+        primary = retrieve(store.snapshot(), Query(terms=("咖啡馆",), now=0.0),
+                           0.5, Params())
+        result = VectorFallback(side, disagree).decide(
+            "咖啡馆", primary, store.snapshot())
+        self.assertEqual(result.decision, "ask")
+        self.assertIn("记忆不确定", result.hint)
+        self.assertIn(a.id, result.candidates)
+        self.assertIn(c.id, result.candidates)
+
     def test_high_score_and_margin_returns_candidate(self):
+        store, a, b, c, side, emb = self.mkcase(b_vec=(0.5, 0.866))
+        primary = retrieve(store.snapshot(), Query(terms=("不存在",), now=0.0),
+                           0.5, Params())
+        result = VectorFallback(
+            side, emb, FallbackPolicy(allow_unanchored_use=True)
+        ).decide("q_accept", primary, store.snapshot())
+        self.assertEqual(result.decision, "use_vector")
+        self.assertEqual(result.candidates[0], a.id)
+        self.assertIn("可能的记忆线索", result.hint)
+
+    def test_unanchored_high_score_asks_by_default(self):
         store, a, b, c, side, emb = self.mkcase(b_vec=(0.5, 0.866))
         primary = retrieve(store.snapshot(), Query(terms=("不存在",), now=0.0),
                            0.5, Params())
         result = VectorFallback(side, emb).decide("q_accept", primary,
                                                    store.snapshot())
-        self.assertEqual(result.decision, "use_vector")
-        self.assertEqual(result.candidates[0], a.id)
-        self.assertIn("可能的记忆线索", result.hint)
+        self.assertEqual(result.decision, "ask")
+        self.assertIn("记忆不确定", result.hint)
 
     def test_close_scores_ask_instead_of_claiming(self):
         store, a, b, c, side, emb = self.mkcase(b_vec=(0.98, 0.199))
@@ -110,8 +134,8 @@ class TestVectorFallback(BaseCase):
         self.assertTrue(primary.seeds)
         result = VectorFallback(side, emb).decide(
             "和同伴商量出行目的地", primary, store.snapshot())
-        self.assertEqual(result.decision, "use_vector")
-        self.assertEqual(result.candidates[0], a.id)
+        self.assertNotEqual(result.decision, "primary")
+        self.assertIn(a.id, result.candidates)
 
 
 if __name__ == "__main__":

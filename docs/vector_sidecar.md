@@ -133,10 +133,10 @@ hard-coding a gate.
 “should-not-remember” negatives. With its conservative defaults:
 
 - primary: 19
-- `use_vector`: 3 (all correct)
-- `ask`: 4
+- `use_vector`: 0 without an explicit tag/anchor
+- `ask`: 7
 - `abstain`: 2
-- confident: 22/28, precision **1.000**
+- confident: 19/28, precision **1.000**
 - negatives falsely claimed: **0/6**
 
 The fallback is deliberately allowed to say “I am not sure” instead of
@@ -145,3 +145,22 @@ non-discriminative: if the top two candidates both contain the same query
 anchor, the anchor does not lower the acceptance threshold. Thresholds here are
 fitted to this synthetic set and the qwen3-embedding score scale; re-tune them
 on real data.
+
+### Real-data smoke test (23 nodes)
+
+The existing local runtime DB contained 23 nodes, **0 edges and 0 tags**, from
+a single session. It is a cold-start snapshot, not a week of conversation. I
+generated 23 queries locally with `qwen2.5:3b` and embedded with
+`qwen3-embedding:latest` (no cloud calls):
+
+| method | R@1 | R@5 | MRR | nDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| lexical | 0.739 | 0.870 | 0.804 | 0.821 |
+| vector | **0.913** | 0.913 | **0.913** | **0.913** |
+| equal RRF hybrid | 0.870 | 0.913 | 0.891 | 0.897 |
+
+The fallback returned primary=17, ask=6, confident=17/17, precision **1.000**,
+and negative false claims **0/6**. It made **no vector-only auto-use** because
+the DB has no tags/entities to serve as exclusive anchors. That is the intended
+precision-first behavior: without a verifier or tag extraction, the system
+asks instead of asserting a vector-only memory.

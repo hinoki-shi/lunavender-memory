@@ -39,11 +39,14 @@ class FallbackPolicy:
     enabled: bool = True
     min_primary_seed: float = 0.05
     min_primary_coverage: float = 0.50
+    require_consensus: bool = True
     top_k: int = 8
     max_candidates: int = 2
     # 无锚点时的接受线
     accept_score: float = 0.45
     accept_margin: float = 0.06
+    # 没有任何独占锚点的候选，默认只反问、不自动当记忆（precision-first）。
+    allow_unanchored_use: bool = False
     # 有实体/标签锚点时可放宽
     anchor_accept_score: float = 0.38
     anchor_accept_margin: float = 0.02
@@ -94,7 +97,9 @@ def _node_terms(snapshot: GraphSnapshot, node_id: int) -> set[str]:
     node = snapshot.nodes.get(int(node_id))
     if node is None:
         return set()
-    return set(node.tags) | set(tokenize(node.summary))
+    # 只用显式标签/实体做锚点。中文按字分词时，单字重合太容易造成
+    # “和同伴/和同事”这种假锚点；没有标签时宁可进入 ask/abstain。
+    return set(node.tags)
 
 
 def _exclusive_anchor_count(snapshot: GraphSnapshot, terms: Sequence[str],
@@ -135,12 +140,31 @@ class VectorFallback:
                 primary_reason = "primary_seed_below_threshold"
             else:
                 primary_reason = "primary_low_coverage"
-        if primary_ok:
+        if self.sidecar is None or self.embedder is None:
+            if primary_ok:
+                return FallbackResult("primary", "primary_unverified")
+            return FallbackResult("abstain", primary_reason + ";no_vector")
+        if primary_ok and not p.require_consensus:
             return FallbackResult("primary", "primary_confident")
 
-        if self.sidecar is None or self.embedder is None:
-            return FallbackResult("abstain", primary_reason + ";no_vector")
         hits = self.sidecar.search(self.embedder.embed(query_text), k=p.top_k)
+        if primary_ok:
+            # 主检索与向量入口一致才直接放行；不一致就反问，不拿单边结果
+            # 冒充确定记忆。
+            if not hits:
+                return FallbackResult("primary", "primary_unverified")
+            if hits[0][0] == primary.seeds[0]:
+                return FallbackResult("primary", "primary_vector_agree")
+            chosen = tuple(dict.fromkeys((primary.seeds[0], hits[0][0])))
+            hint = self._render_ask(snapshot, chosen)
+            return FallbackResult(
+                "ask", "primary_vector_disagree", chosen,
+                {nid: score for nid, score in hits[:len(chosen)]},
+                _anchor_count(snapshot, terms, primary.seeds[0]),
+                _exclusive_anchor_count(snapshot, terms, primary.seeds[0],
+                                        hits[0][0]),
+                float(hits[0][1]), hint,
+            )
         if not hits:
             return FallbackResult("abstain", primary_reason + ";no_vector_hit")
 
@@ -151,11 +175,16 @@ class VectorFallback:
         anchors = _anchor_count(snapshot, terms, top_id)
         exclusive = _exclusive_anchor_count(snapshot, terms, top_id, second_id)
 
-        accept = (top_score >= p.accept_score and margin >= p.accept_margin)
+        accept = False
         if exclusive > 0:
-            accept = accept or (
+            accept = (
                 top_score >= p.anchor_accept_score
                 and margin >= p.anchor_accept_margin
+            )
+        elif p.allow_unanchored_use:
+            accept = (
+                top_score >= p.accept_score
+                and margin >= p.accept_margin
             )
         if accept:
             chosen = tuple(nid for nid, _ in hits[:max(1, p.max_candidates)])

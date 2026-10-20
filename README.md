@@ -117,7 +117,7 @@ evaluate your own checkpoint on your data.
 python -m unittest discover -s tests -v
 ```
 
-当前核心与示例测试共 **126** 条。
+当前核心与示例测试共 **128** 条。
 
 ## 目录
 

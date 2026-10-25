@@ -42,11 +42,7 @@
 python -m pip install "git+https://github.com/hinoki-shi/lunavender-memory.git"
 ```
 
-向量 sidecar 目前位于预览分支，尚未合并进默认 `main`：
-
-```bash
-python -m pip install "git+https://github.com/hinoki-shi/lunavender-memory.git@codex/vector-sidecar"
-```
+向量 sidecar 已包含在默认 `main` 中，但仍是需要显式接线的可选组件。
 
 或者下载/克隆仓库后本地安装：
 

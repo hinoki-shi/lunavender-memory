@@ -19,8 +19,9 @@
 - 隐私闸、硬删除、墓碑和备份/恢复工具；
 - 主网 / 辅网：自我轨迹（正常路径 append-only，另备显式擦除）与显式提案-批准路径；见
   [docs/dual-network.md](https://github.com/hinoki-shi/lunavender-memory/blob/main/docs/dual-network.md)；
-- 可选的向量检索 sidecar（实验原型）：主网不变，sidecar 可重建；见
-  [docs/vector_sidecar.md](https://github.com/hinoki-shi/lunavender-memory/blob/main/docs/vector_sidecar.md)；
+- 可选的向量检索 sidecar：主网不变、sidecar 可重建，包含词面/向量 RRF
+  混合种子和保守弃权兜底；默认不启用；见
+  [docs/vector_sidecar.md](docs/vector_sidecar.md)；
 - 近期工作记忆缓冲的纯逻辑实现。
 
 核心包只依赖 Python 标准库；适配器、模型和外部 API 不属于核心包。
@@ -39,6 +40,12 @@
 
 ```bash
 python -m pip install "git+https://github.com/hinoki-shi/lunavender-memory.git"
+```
+
+向量 sidecar 目前位于预览分支，尚未合并进默认 `main`：
+
+```bash
+python -m pip install "git+https://github.com/hinoki-shi/lunavender-memory.git@codex/vector-sidecar"
 ```
 
 或者下载/克隆仓库后本地安装：
@@ -117,7 +124,7 @@ evaluate your own checkpoint on your data.
 python -m unittest discover -s tests -v
 ```
 
-当前核心与示例测试共 **128** 条。
+当前核心与示例测试共 **129** 条（Windows 下会跳过 1 个 POSIX 权限位测试）。
 
 ## 目录
 
@@ -133,12 +140,16 @@ docs/              架构与设计说明
 
 ## 已知限制
 
-- 词面检索仍是默认实现，尚未接向量召回；
+- 词面检索仍是默认路径；向量 sidecar、RRF 混合种子和保守兜底已经实现，
+  但需要调用方显式接线，不会自动开启；
 - 事件标签提取需要由调用方提供；
 - 规则提取器只用于端到端接线，不应被当成准确的情绪模型；
 - 记忆压缩、时间模糊和反馈验证仍是后续工作；
 - 默认是明文 SQLite，不内置整库/字段加密；需要静态加密时请把库放在 BitLocker / LUKS 等加密卷，或使用 SQLCipher 兼容封装。文件权限只做 `0600` 尽力而为，Windows ACL 需自行配置；
-- 向量 sidecar 自带的是确定性 `HashEmbedder`（测试替身，不是语义模型）；真实 BGE-M3 / e5 适配器尚未内置，且当前检索是纯 Python 线性扫描，规模上去后要换 Flat/HNSW/IVF-PQ；
+- 核心包自带确定性 `HashEmbedder`（测试替身，不是语义模型）；
+  `examples/ollama_embedder.py` 提供可选的 Ollama embedding 适配示例，
+  但仓库不内置 embedding 服务。当前检索是纯 Python 线性扫描，
+  规模上去后要换 Flat/HNSW/IVF-PQ；
 - 新版提案轨迹只存文本指纹，批准时必须重新传入 `summary=`；旧版轨迹会在批准后擦掉自由文本字段；
 - API 在 `0.x` 阶段可能调整。
 
